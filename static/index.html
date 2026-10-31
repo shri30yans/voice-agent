@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ava · Voice Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#07080b; --bg2:#0d0f14; --panel:rgba(255,255,255,.035); --panel-hi:rgba(255,255,255,.06);
+  --line:rgba(255,255,255,.08); --line-hi:rgba(255,255,255,.14);
+  --ink:#eef0f5; --ink2:#a4a9b6; --ink3:#666c7a;
+  --accent:#7dd3fc; --danger:#f87171; --ok:#4ade80;
+  --radius:16px; --font:"Inter",-apple-system,BlinkMacSystemFont,system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--font);-webkit-font-smoothing:antialiased;overflow:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;
+  background:radial-gradient(1200px 700px at 50% 38%,rgba(var(--glow,96,165,250),.10),transparent 60%),radial-gradient(900px 500px at 50% 120%,rgba(255,255,255,.03),transparent 70%);
+  transition:background 1.2s ease}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer;border:0;background:none}
+.app{position:relative;height:100%;display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:1fr auto}
+
+/* top bar */
+.top{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:18px 28px;z-index:2}
+.brand{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.mark{width:26px;height:26px;border-radius:8px;background:conic-gradient(from 210deg,#818cf8,#7dd3fc,#5eead4,#c4b5fd,#818cf8);box-shadow:0 0 18px rgba(125,211,252,.35)}
+.brand b{font-weight:600;letter-spacing:-.01em;font-size:15px}
+.brand span{color:var(--ink3);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink2);font-size:12.5px;font-weight:500;backdrop-filter:blur(12px)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ink3);box-shadow:0 0 0 0 transparent;transition:background .3s}
+.pill[data-s=listening] .dot{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+.pill[data-s=hearing] .dot{background:#5eead4;box-shadow:0 0 10px #5eead4;animation:pulse 1s infinite}
+.pill[data-s=thinking] .dot{background:#c4b5fd;box-shadow:0 0 10px #c4b5fd;animation:pulse .7s infinite}
+.pill[data-s=speaking] .dot{background:var(--accent);box-shadow:0 0 10px var(--accent)}
+@keyframes pulse{50%{opacity:.35}}
+.select{position:relative}
+.select select{appearance:none;height:32px;padding:0 30px 0 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);font-size:12.5px;font-weight:500;color:var(--ink2);outline:none;max-width:180px}
+.select select:hover,.iconbtn:hover{border-color:var(--line-hi);color:var(--ink)}
+.select::after{content:"";position:absolute;right:13px;top:13px;width:6px;height:6px;border-right:1.5px solid var(--ink3);border-bottom:1.5px solid var(--ink3);transform:rotate(45deg);pointer-events:none}
+.iconbtn{height:32px;min-width:32px;padding:0 10px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink2);font-size:12.5px;font-weight:500;transition:.15s}
+.iconbtn svg{width:15px;height:15px}
+.iconbtn.on{color:var(--ink);border-color:var(--line-hi);background:var(--panel-hi)}
+
+/* stage */
+.stage{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;padding:0 24px}
+#orb{width:min(58vh,520px,88vw);aspect-ratio:1;display:block}
+.caption{position:relative;width:min(680px,100%);min-height:96px;margin-top:-8px;text-align:center}
+.caption .you{color:var(--ink3);font-size:13.5px;min-height:21px;transition:opacity .4s}
+.caption .say{font-size:clamp(17px,2.3vw,22px);line-height:1.45;letter-spacing:-.012em;font-weight:450;color:var(--ink);margin-top:6px;min-height:32px;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;transition:opacity .4s}
+.caption .hint{color:var(--ink3);font-size:14px}
+
+/* transcript */
+.side{grid-row:2/4;grid-column:2;width:0;overflow:hidden;transition:width .35s cubic-bezier(.2,.8,.2,1);border-left:1px solid transparent}
+.side.open{width:360px;border-left-color:var(--line)}
+.side-in{width:360px;height:100%;display:flex;flex-direction:column;background:linear-gradient(var(--bg2),var(--bg))}
+.side h2{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);padding:20px 22px 12px}
+#log{flex:1;overflow-y:auto;padding:0 22px 22px;display:flex;flex-direction:column;gap:16px;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.m .who{font-size:11.5px;font-weight:600;color:var(--ink3);margin-bottom:3px;letter-spacing:.02em}
+.m.bot .who{color:var(--accent)}
+.m .txt{color:var(--ink2);font-size:13.5px;line-height:1.55}
+.m.user .txt{color:var(--ink)}
+.m.cut .txt::after{content:" · interrupted";color:var(--ink3);font-size:12px}
+.m.err .txt{color:var(--danger)}
+.empty{color:var(--ink3);font-size:13px;padding-top:6px}
+
+/* dock */
+.dock{grid-column:1;display:flex;flex-direction:column;align-items:center;gap:14px;padding:8px 24px 26px}
+.bar{display:flex;align-items:center;gap:10px;width:min(560px,100%);padding:7px;border:1px solid var(--line);border-radius:999px;background:rgba(15,17,22,.7);backdrop-filter:blur(18px);box-shadow:0 10px 40px rgba(0,0,0,.4)}
+#mic{flex:none;width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:var(--ink);color:#0a0b0f;transition:transform .15s,background .2s,box-shadow .3s}
+#mic:hover{transform:scale(1.05)}
+#mic svg{width:20px;height:20px}
+#mic .stop{display:none}
+.live #mic{background:rgba(248,113,113,.14);color:var(--danger);box-shadow:inset 0 0 0 1px rgba(248,113,113,.35)}
+.live #mic .go{display:none}.live #mic .stop{display:block}
+#text{flex:1;min-width:0;height:46px;border:0;background:none;outline:none;padding:0 6px;font-size:14.5px}
+#text::placeholder{color:var(--ink3)}
+#send{flex:none;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:var(--ink3);transition:.15s;margin-right:3px}
+#send:not(:disabled):hover{color:var(--ink);background:var(--panel-hi)}
+#send svg{width:17px;height:17px}
+.stats{display:flex;gap:18px;font:12px var(--mono);color:var(--ink3);min-height:18px;flex-wrap:wrap;justify-content:center}
+.stats b{color:var(--ink2);font-weight:500}
+.stats .hero b{color:var(--accent)}
+
+@media (max-width:900px){
+  .side.open{position:fixed;inset:0 0 0 auto;width:min(360px,92vw);z-index:5;box-shadow:-20px 0 60px rgba(0,0,0,.6)}
+  .top{padding:14px 16px}.brand span{display:none}
+  .dock{padding:8px 16px 18px}.stage{padding:0 16px}
+}
+@media (max-width:520px){.select{display:none}.stats{gap:12px}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand"><div class="mark"></div><b>Ava</b><span id="sub">Local voice agent</span></div>
+    <div class="pill" id="pill" data-s="off"><i class="dot"></i><span id="state">Offline</span></div>
+    <label class="select" title="Voice"><select id="voice"></select></label>
+    <button class="iconbtn" id="reset" title="New conversation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button>
+    <button class="iconbtn" id="tog" title="Transcript"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button>
+  </header>
+
+  <section class="stage">
+    <canvas id="orb"></canvas>
+    <div class="caption">
+      <div class="you" id="you"></div>
+      <div class="say" id="say"><span class="hint">Tap the mic and start talking. Interrupt whenever you like.</span></div>
+    </div>
+  </section>
+
+  <aside class="side" id="side"><div class="side-in">
+    <h2>Transcript</h2>
+    <div id="log"><div class="empty">Nothing yet.</div></div>
+  </div></aside>
+
+  <footer class="dock">
+    <form class="bar" id="form">
+      <button type="button" id="mic" title="Start / stop">
+        <svg class="go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        <svg class="stop" viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+      </button>
+      <input id="text" placeholder="Message Ava…" autocomplete="off">
+      <button id="send" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </form>
+    <div class="stats" id="stats"></div>
+  </footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+/* ------------------------------------------------------------------ orb (WebGL raymarched, noise-displaced sphere) */
+const Orb = (() => {
+  const canvas = $('orb'), gl = canvas.getContext('webgl', {premultipliedAlpha: true, antialias: true, alpha: true});
+  const vs = `attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}`;
+  const fs = `precision highp float;
+uniform vec2 uRes;uniform float uTime,uLevel,uEnergy;uniform vec3 uA,uB;
+vec3 mod289(vec3 x){return x-floor(x*(1./289.))*289.;}vec4 mod289(vec4 x){return x-floor(x*(1./289.))*289.;}
+vec4 perm(vec4 x){return mod289(((x*34.)+1.)*x);}vec4 tis(vec4 r){return 1.79284291400159-.85373472095314*r;}
+float snoise(vec3 v){const vec2 C=vec2(1./6.,1./3.);const vec4 D=vec4(0.,.5,1.,2.);
+vec3 i=floor(v+dot(v,C.yyy));vec3 x0=v-i+dot(i,C.xxx);vec3 g=step(x0.yzx,x0.xyz);vec3 l=1.-g;vec3 i1=min(g.xyz,l.zxy);vec3 i2=max(g.xyz,l.zxy);
+vec3 x1=x0-i1+C.xxx;vec3 x2=x0-i2+C.yyy;vec3 x3=x0-D.yyy;i=mod289(i);
+vec4 p=perm(perm(perm(i.z+vec4(0.,i1.z,i2.z,1.))+i.y+vec4(0.,i1.y,i2.y,1.))+i.x+vec4(0.,i1.x,i2.x,1.));
+float n_=.142857142857;vec3 ns=n_*D.wyz-D.xzx;vec4 j=p-49.*floor(p*ns.z*ns.z);vec4 x_=floor(j*ns.z);vec4 y_=floor(j-7.*x_);
+vec4 x=x_*ns.x+ns.yyyy;vec4 y=y_*ns.x+ns.yyyy;vec4 h=1.-abs(x)-abs(y);vec4 b0=vec4(x.xy,y.xy);vec4 b1=vec4(x.zw,y.zw);
+vec4 s0=floor(b0)*2.+1.;vec4 s1=floor(b1)*2.+1.;vec4 sh=-step(h,vec4(0.));vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+vec3 p0=vec3(a0.xy,h.x);vec3 p1=vec3(a0.zw,h.y);vec3 p2=vec3(a1.xy,h.z);vec3 p3=vec3(a1.zw,h.w);
+vec4 nm=tis(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));p0*=nm.x;p1*=nm.y;p2*=nm.z;p3*=nm.w;
+vec4 m=max(.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.);m=m*m;
+return 42.*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));}
+mat3 rotY(float a){float c=cos(a),s=sin(a);return mat3(c,0.,-s,0.,1.,0.,s,0.,c);}
+mat3 rotX(float a){float c=cos(a),s=sin(a);return mat3(1.,0.,0.,0.,c,s,0.,-s,c);}
+float T;
+float disp(vec3 p){
+  vec3 q=rotY(T*.12)*rotX(T*.07)*p;
+  float a=.016+uLevel*.05+uEnergy*.006;
+  return snoise(q*1.2+vec3(0.,0.,T*.3))*a+snoise(q*2.4-vec3(T*.4))*(.003+uLevel*.014);
+}
+float map(vec3 p){return length(p)-.74*(1.+uLevel*.07)-disp(p);}  // breathes with the voice
+vec3 nrm(vec3 p){vec2 e=vec2(.0025,0.);return normalize(vec3(map(p+e.xyy)-map(p-e.xyy),map(p+e.yxy)-map(p-e.yxy),map(p+e.yyx)-map(p-e.yyx)));}
+void main(){
+  T=uTime;
+  vec2 uv=(gl_FragCoord.xy*2.-uRes)/min(uRes.x,uRes.y);
+  vec3 ro=vec3(0.,0.,2.55),rd=normalize(vec3(uv*.98,-1.6));
+  // march, remembering the closest approach so the silhouette can be anti-aliased instead of a hard hit/miss
+  float t=0.,md=1e3,mt=0.;bool hit=false;
+  for(int i=0;i<96;i++){vec3 p=ro+rd*t;float d=map(p);if(d<md){md=d;mt=t;}if(d<.0005){hit=true;break;}t+=d*.85;if(t>4.)break;}
+  float px=2.4/min(uRes.x,uRes.y)*mt/1.6;             // world size of one pixel at that depth
+  float cov=hit?1.:1.-smoothstep(0.,px,md);
+  float cd=length(cross(ro,rd));
+  float halo=exp(-max(cd-.74,0.)*6.)*(.16+uLevel*.18+uEnergy*.05);
+  halo*=1.-smoothstep(.62,.98,length(uv));            // reach zero well inside the canvas, so its square edge never shows
+  vec3 hc=mix(uA,uB,.6)*halo;
+  if(cov<=0.){gl_FragColor=vec4(hc,halo);return;}
+  if(!hit)t=mt;
+  vec3 p=ro+rd*t,n=nrm(p),v=-rd;
+  float ndv=max(dot(n,v),0.);float fres=pow(1.-ndv,2.6);
+  vec3 L1=normalize(vec3(-.55,.75,.6)),L2=normalize(vec3(.7,-.35,.4));
+  float d1=max(dot(n,L1),0.),d2=max(dot(n,L2),0.);
+  float sp=pow(max(dot(reflect(-L1,n),v),0.),48.);
+  float band=.5+.5*snoise(rotY(T*.15)*p*1.7+vec3(T*.25));
+  vec3 base=mix(uA,uB,clamp(band*.85+n.y*.25+.1,0.,1.));
+  vec3 irid=.5+.5*cos(6.2831*(vec3(.0,.33,.67)+ndv*.8+band*.4+T*.05));
+  vec3 col=base*(.18+.85*d1)+uB*d2*.28;
+  col+=mix(uB,irid,.3)*fres*(1.+uLevel*.35);
+  col+=vec3(1.)*sp*.5;
+  col=1.-exp(-col*1.25);
+  gl_FragColor=vec4(col*cov+hc*(1.-cov),cov+halo*(1.-cov));
+}`;
+  const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(o)); return o; };
+  const prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(prog); gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer()); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,3,-1,-1,3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const U = n => gl.getUniformLocation(prog, n), uRes = U('uRes'), uTime = U('uTime'), uLevel = U('uLevel'), uEnergy = U('uEnergy'), uA = U('uA'), uB = U('uB');
+
+  const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+  const PALETTE = {               // [deep, bright, page glow rgb]
+    off:       ['#1e2a5a', '#6f8bd8', '96,120,220'],
+    listening: ['#123a63', '#7dd3fc', '96,165,250'],
+    hearing:   ['#0b4d4a', '#5eead4', '45,212,191'],
+    thinking:  ['#3b1d7a', '#c4b5fd', '167,139,250'],
+    speaking:  ['#1d3fb8', '#a5f3fc', '125,211,252'],
+  };
+  let A = hex(PALETTE.off[0]), B = hex(PALETTE.off[1]), tA = A, tB = B;
+  let level = 0, target = 0, energy = 0, tEnergy = 0, time = 0, last = performance.now();
+
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2), r = canvas.getBoundingClientRect();
+    canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr); gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  addEventListener('resize', resize); resize();
+
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, .05); last = now;
+    level += (target - level) * (target > level ? .32 : .1);    // quick attack, smooth release
+    target *= .85;
+    energy += (tEnergy - energy) * .05;
+    time += dt * (.35 + energy * .4 + level * 1.1);             // swirl speeds up with activity
+    for (let i = 0; i < 3; i++) { A[i] += (tA[i] - A[i]) * .06; B[i] += (tB[i] - B[i]) * .06; }
+    gl.uniform2f(uRes, canvas.width, canvas.height); gl.uniform1f(uTime, time); gl.uniform1f(uLevel, level); gl.uniform1f(uEnergy, energy);
+    gl.uniform3fv(uA, A); gl.uniform3fv(uB, B);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  return {
+    feed(rms) { target = Math.max(target, Math.min(1, Math.pow(rms * 5, .8))); },
+    mode(m) {
+      const p = PALETTE[m] || PALETTE.off; tA = hex(p[0]); tB = hex(p[1]); A = [...A]; B = [...B];
+      tEnergy = {off: 0, listening: .15, hearing: .5, thinking: .9, speaking: .6}[m] ?? 0;
+      document.body.style.setProperty('--glow', p[2]);
+    },
+  };
+})();
+
+/* ------------------------------------------------------------------ audio + socket */
+let ws, micCtx, outCtx, player, micStream, running = false, botMsg = null, mode = 'off', userSpeaking = false, botPlaying = false;
+
+const captureWorklet = `class C extends AudioWorkletProcessor{constructor(){super();this.b=new Int16Array(512);this.n=0}
+process(i){const x=i[0][0];if(!x)return true;for(let k=0;k<x.length;k++){const s=Math.max(-1,Math.min(1,x[k]));this.b[this.n++]=s*32767;
+if(this.n===512){this.port.postMessage(this.b.buffer,[this.b.buffer]);this.b=new Int16Array(512);this.n=0}}return true}}
+registerProcessor('capture',C)`;
+const playWorklet = `class P extends AudioWorkletProcessor{constructor(){super();this.q=[];this.cur=null;this.i=0;this.playing=false;this.t=0;
+this.port.onmessage=e=>{if(e.data==='flush'){this.q=[];this.cur=null}else this.q.push(new Int16Array(e.data))}}
+process(_,o){const out=o[0][0];let e=0;for(let k=0;k<out.length;k++){if(!this.cur||this.i>=this.cur.length){this.cur=this.q.shift()||null;this.i=0}
+const v=this.cur?this.cur[this.i++]/32768:0;out[k]=v;e+=v*v}
+const busy=!!this.cur||this.q.length>0;if(busy!==this.playing){this.playing=busy;this.port.postMessage({playing:busy})}
+if(busy&&++this.t%3===0)this.port.postMessage({level:Math.sqrt(e/out.length)});return true}}
+registerProcessor('play',P)`;
+const moduleURL = src => URL.createObjectURL(new Blob([src], {type: 'application/javascript'}));
+const LABEL = {off: 'Offline', listening: 'Listening', hearing: 'Hearing you', thinking: 'Thinking', speaking: 'Speaking'};
+
+function setMode(m) {
+  if (m === mode) return; mode = m;
+  $('pill').dataset.s = m; $('state').textContent = LABEL[m]; Orb.mode(m);
+}
+function refreshMode() {
+  if (!running) return setMode('off');
+  if (userSpeaking) return setMode('hearing');
+  if (botPlaying) return setMode('speaking');
+  if (pendingReply) return setMode('thinking');
+  setMode('listening');
+}
+let pendingReply = false;
+
+function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+
+function log(cls, who, text) {
+  const e = $('log').querySelector('.empty'); if (e) e.remove();
+  const d = document.createElement('div'); d.className = 'm ' + cls;
+  d.innerHTML = '<div class="who"></div><div class="txt"></div>';
+  d.firstChild.textContent = who; d.lastChild.textContent = text;
+  $('log').append(d); $('log').scrollTop = $('log').scrollHeight; return d;
+}
+function stat(m) {
+  const s = $('stats'); s.innerHTML = '';
+  const add = (k, v, hero) => { if (v == null) return; const e = document.createElement('span'); if (hero) e.className = 'hero'; e.innerHTML = `${k} <b>${v} ms</b>`; s.append(e); };
+  add('voice→voice', m.first_audio_ms, true); add('asr', m.asr_ms); add('llm ttft', m.llm_ttft_ms);
+}
+
+async function start() {
+  micStream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1}});
+  micCtx = new AudioContext({sampleRate: 16000});
+  outCtx = new AudioContext({sampleRate: 24000, latencyHint: 'interactive'});
+  await micCtx.audioWorklet.addModule(moduleURL(captureWorklet));
+  await outCtx.audioWorklet.addModule(moduleURL(playWorklet));
+  player = new AudioWorkletNode(outCtx, 'play', {outputChannelCount: [1]});
+  player.connect(outCtx.destination);
+  player.port.onmessage = e => {
+    if ('playing' in e.data) { botPlaying = e.data.playing; send({type: 'playback', playing: botPlaying}); refreshMode(); }
+    if ('level' in e.data) Orb.feed(e.data.level * 1.4);
+  };
+  const cap = new AudioWorkletNode(micCtx, 'capture');
+  micCtx.createMediaStreamSource(micStream).connect(cap);
+
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  cap.port.onmessage = e => {
+    if (!botPlaying) { const a = new Int16Array(e.data); let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * a[i]; Orb.feed(Math.sqrt(s / a.length) / 32768 * 2.2); }
+    if (ws.readyState === 1) ws.send(e.data);
+  };
+  ws.onopen = () => { send({type: 'voice', voice: $('voice').value}); running = true; $('app').classList.add('live'); refreshMode(); $('say').innerHTML = '<span class="hint">Listening. Go ahead.</span>'; };
+  ws.onclose = () => { if (running) stop(); };
+  ws.onmessage = e => {
+    if (typeof e.data !== 'string') { player.port.postMessage(e.data, [e.data]); return; }
+    const m = JSON.parse(e.data);
+    switch (m.type) {
+      case 'vad': userSpeaking = m.speaking; if (!m.speaking) pendingReply = true; refreshMode(); break;
+      case 'user': $('you').textContent = '“' + m.text + '”'; $('say').textContent = ''; log('user', 'You', m.text); botMsg = null; pendingReply = true; refreshMode(); break;
+      case 'assistant':
+        if (!botMsg) { botMsg = log('bot', 'Ava', ''); $('say').textContent = ''; }
+        botMsg.lastChild.textContent += (botMsg.lastChild.textContent ? ' ' : '') + m.text;
+        $('say').textContent = botMsg.lastChild.textContent; $('log').scrollTop = $('log').scrollHeight; break;
+      case 'interrupt': player.port.postMessage('flush'); if (botMsg) botMsg.classList.add('cut'); botMsg = null; break;
+      case 'metrics': stat(m.metrics); break;
+      case 'assistant_done': pendingReply = false; botMsg = null; if (m.metrics) stat(m.metrics); refreshMode(); break;
+      case 'error': pendingReply = false; log('err', 'Error', m.text); $('say').innerHTML = '<span class="hint"></span>'; $('say').firstChild.textContent = m.text; refreshMode(); break;
+    }
+  };
+}
+
+function stop() {
+  running = false; userSpeaking = botPlaying = pendingReply = false;
+  $('app').classList.remove('live');
+  ws && ws.close(); micStream && micStream.getTracks().forEach(t => t.stop());
+  micCtx && micCtx.close(); outCtx && outCtx.close();
+  refreshMode(); $('say').innerHTML = '<span class="hint">Tap the mic to talk again.</span>';
+}
+
+/* ------------------------------------------------------------------ controls */
+fetch('/config').then(r => r.json()).then(c => {
+  for (const v of c.voices) $('voice').add(new Option(v, v, false, v === c.voice));
+  $('sub').textContent = `Parakeet · ${c.model} · Phonon`;
+});
+$('mic').onclick = () => running ? stop() : start().catch(err => log('err', 'Error', String(err)));
+$('voice').onchange = () => send({type: 'voice', voice: $('voice').value});
+$('reset').onclick = () => { send({type: 'reset'}); player && player.port.postMessage('flush'); $('log').innerHTML = '<div class="empty">Nothing yet.</div>'; $('stats').innerHTML = ''; $('you').textContent = ''; $('say').innerHTML = '<span class="hint">New conversation.</span>'; };
+$('tog').onclick = () => { $('side').classList.toggle('open'); $('tog').classList.toggle('on'); setTimeout(() => dispatchEvent(new Event('resize')), 380); };
+if (innerWidth > 1100) { $('side').classList.add('open'); $('tog').classList.add('on'); }
+$('form').onsubmit = async e => {
+  e.preventDefault(); const t = $('text').value.trim(); if (!t) return;
+  if (!running) { try { await start(); await new Promise(r => { const i = setInterval(() => { if (running) { clearInterval(i); r(); } }, 30); }); } catch (err) { return log('err', 'Error', String(err)); } }
+  send({type: 'text', text: t}); $('text').value = '';
+};
+</script>
+</body>
+</html>

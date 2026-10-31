@@ -1,0 +1,9 @@
+ptts==0.5.0
+parakeet-mlx
+mlx-lm
+openai
+fastapi
+uvicorn[standard]
+onnxruntime
+numpy
+python-dotenv

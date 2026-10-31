@@ -1,0 +1,8 @@
+.venv/
+.env
+models/
+__pycache__/
+.DS_Store
+
+# separate project, not part of the voice agent
+leadfinder/
