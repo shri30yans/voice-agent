@@ -6,3 +6,7 @@ __pycache__/
 
 # separate project, not part of the voice agent
 leadfinder/
+
+# local agent workspaces and experiment scratch
+.claude/
+experiments/
