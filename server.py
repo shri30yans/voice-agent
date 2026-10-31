@@ -1,6 +1,6 @@
 """Local real-time voice agent.
 
-Browser mic (16 kHz PCM16) -> WebSocket -> Silero VAD -> Parakeet (MLX) -> LLM (OpenAI-compatible,
+Browser mic (16 kHz PCM16) -> WebSocket -> Silero VAD -> Smart Turn v3 -> Parakeet (MLX) -> LLM (OpenAI-compatible,
 DeepSeek on Bedrock by default) -> Phonon TTS (CPU, streaming) -> WebSocket -> browser speaker (24 kHz PCM16).
 
 The LLM streams into a sentence chunker, and each chunk is synthesized while the LLM keeps writing, so the
@@ -25,9 +25,12 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://bedrock-mantle.us-west-2.api.a
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek.v3.2")
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "300"))
-ASR_MODEL = os.getenv("ASR_MODEL", "mlx-community/parakeet-tdt-0.6b-v3")
+ASR_BACKEND = os.getenv("ASR_BACKEND", "mlx")  # "mlx" (parakeet-mlx) or "redux" (Moondream Parakeet Redux, CPU; needs moondream + torch<2.15)
+ASR_MODEL = os.getenv("ASR_MODEL", "moondream/parakeet-redux" if ASR_BACKEND == "redux" else "mlx-community/parakeet-tdt-0.6b-v3")
 TTS_VOICE = os.getenv("TTS_VOICE", "Harper")
-END_SILENCE_MS = int(os.getenv("END_SILENCE_MS", "550"))  # silence that ends a user turn
+END_SILENCE_MS = int(os.getenv("END_SILENCE_MS", "900"))  # longest pause tolerated before a turn is forced to end
+TURN_CHECK_MS = int(os.getenv("TURN_CHECK_MS", "200"))  # silence after which Smart Turn is asked "are they done?"
+TURN_THRESHOLD = float(os.getenv("TURN_THRESHOLD", "0.5"))  # Smart Turn probability that counts as "done"
 BARGE_IN_MS = int(os.getenv("BARGE_IN_MS", "250"))  # sustained speech needed to interrupt the bot
 VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", "0.5"))
 PORT = int(os.getenv("PORT", "8000"))
@@ -64,18 +67,48 @@ class SileroVAD:
         return float(out[0, 0])
 
 
+class SmartTurn:
+    """Pipecat Smart Turn v3 (Whisper-tiny encoder, int8 ONNX): looks at the audio of the turn so far and says
+    whether the speaker is finished or just pausing. ~10-30 ms on CPU. None if the model file is missing."""
+    WINDOW = SR_IN * 8
+
+    def __init__(self, path: Path):
+        from transformers import WhisperFeatureExtractor
+        o = ort.SessionOptions(); o.intra_op_num_threads = 2; o.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        o.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self.session = ort.InferenceSession(str(path), o, providers=["CPUExecutionProvider"])
+        self.fe = WhisperFeatureExtractor(chunk_length=8)
+        self(np.zeros(SR_IN, np.float32))  # warm up
+
+    def __call__(self, audio: np.ndarray) -> float:
+        audio = audio[-self.WINDOW:]
+        f = self.fe(audio, sampling_rate=SR_IN, return_tensors="np", padding="max_length", max_length=self.WINDOW,
+                    truncation=True, do_normalize=True)["input_features"].astype(np.float32)
+        return float(self.session.run(None, {"input_features": f})[0].reshape(-1)[0])
+
+
+_st_path = ROOT / "models/smart-turn-v3.2-cpu.onnx"
+smart_turn = SmartTurn(_st_path) if _st_path.exists() else None
+turn_pool = ThreadPoolExecutor(1, thread_name_prefix="turn")
+
 asr_pool = ThreadPoolExecutor(1, thread_name_prefix="asr")  # MLX stays on one thread
 asr_model = None
 
 
 def _load_asr():
     global asr_model
-    from parakeet_mlx import from_pretrained
-    asr_model = from_pretrained(ASR_MODEL)
+    if ASR_BACKEND == "redux":
+        import moondream as md
+        asr_model = md.photon(ASR_MODEL, device="cpu")
+    else:
+        from parakeet_mlx import from_pretrained
+        asr_model = from_pretrained(ASR_MODEL)
     _transcribe(np.zeros(SR_IN, np.float32))
 
 
 def _transcribe(pcm: np.ndarray) -> str:
+    if ASR_BACKEND == "redux":
+        return asr_model.transcribe(audio=pcm, sample_rate=SR_IN)["text"].strip()
     import mlx.core as mx
     from parakeet_mlx.audio import get_logmel
     mel = get_logmel(mx.array(pcm), asr_model.preprocessor_config)
@@ -114,7 +147,7 @@ def pop_chunk(buf: str, first: bool) -> tuple[str | None, str]:
         return buf[:m.end(1)], buf[m.end():]
     if first or len(buf) > 120:
         for m in _CLAUSE.finditer(buf):
-            if m.end(1) >= (25 if first else 60):
+            if m.end(1) >= (14 if first else 60):
                 return buf[:m.end(1)], buf[m.end():]
     return None, buf
 
@@ -135,6 +168,8 @@ class Session:
         self.in_speech = False
         self.speech_ms = 0
         self.silence_ms = 0
+        self.next_check_ms = TURN_CHECK_MS
+        self.spec: asyncio.Future | None = None  # speculative ASR of the audio so far
 
     async def send(self, **msg):
         await self.ws.send_text(json.dumps(msg))
@@ -168,18 +203,45 @@ class Session:
                 await self.interrupt()
         else:
             self.silence_ms += 32
-            if self.silence_ms >= END_SILENCE_MS:
+            if smart_turn is None:  # no model: plain silence timeout
+                if self.silence_ms >= min(END_SILENCE_MS, 550):
+                    await self.end_turn()
+            elif self.silence_ms >= END_SILENCE_MS:
                 await self.end_turn()
+            elif self.silence_ms >= self.next_check_ms:
+                self.next_check_ms += TURN_CHECK_MS
+                await self.check_turn()
 
-    async def end_turn(self):
+    async def check_turn(self):
+        """Pause detected: guess the transcript and ask Smart Turn if the user is done, concurrently. If they are,
+        the transcript is usually ready by the time we commit; if not, the guess is thrown away."""
+        loop = asyncio.get_running_loop()
         audio = np.concatenate(self.speech)
+        if len(audio) < SR_IN * 0.3:
+            return
+        if self.spec is None or self.spec.done():
+            self.spec = loop.run_in_executor(asr_pool, _transcribe, audio)
+            spec = self.spec
+        else:
+            spec = None  # earlier guess still running; it's stale either way
+        p = await loop.run_in_executor(turn_pool, smart_turn, audio)
+        if p >= TURN_THRESHOLD and spec is not None:
+            await self.end_turn(spec)
+        elif p >= TURN_THRESHOLD:
+            await self.end_turn()
+
+    async def end_turn(self, spec: asyncio.Future | None = None):
+        audio = np.concatenate(self.speech)
+        waited = self.silence_ms
         self.in_speech, self.speech, self.speech_ms, self.silence_ms = False, [], 0, 0
+        self.next_check_ms = TURN_CHECK_MS
+        self.spec = None
         await self.send(type="vad", speaking=False)
         if len(audio) < SR_IN * 0.3:
             return
-        t_end = time.perf_counter() - END_SILENCE_MS / 1000  # when the user actually stopped talking
+        t_end = time.perf_counter() - waited / 1000  # when the user actually stopped talking
         await self.interrupt()
-        self.reply = asyncio.create_task(self.respond(audio, t_end))
+        self.reply = asyncio.create_task(self.respond(audio, t_end, spec))
 
     async def interrupt(self):
         if self.reply and not self.reply.done():
@@ -192,13 +254,15 @@ class Session:
             await self.send(type="interrupt")
             self.client_playing = False
 
-    async def respond(self, audio: np.ndarray, t_end: float):
+    async def respond(self, audio: np.ndarray, t_end: float, spec: asyncio.Future | None = None):
         loop = asyncio.get_running_loop()
-        text = await loop.run_in_executor(asr_pool, _transcribe, audio)
+        t_turn = time.perf_counter()
+        text = await (spec or loop.run_in_executor(asr_pool, _transcribe, audio))
         t_asr = time.perf_counter()
         if not text or not re.search(r"\w", text):
             return
-        await self.reply_to(text, t_end, {"asr_ms": round((t_asr - t_end) * 1000)})
+        # stage durations: turn = silence before we decided, asr = wait for the transcript after that
+        await self.reply_to(text, t_end, {"turn_ms": round((t_turn - t_end) * 1000), "asr_ms": round((t_asr - t_turn) * 1000)})
 
     async def reply_to(self, text: str, t_end: float, metrics: dict):
         await self.send(type="user", text=text)
@@ -226,6 +290,7 @@ class Session:
 
     async def stream_llm(self, chunks: asyncio.Queue, metrics: dict, t_end: float):
         messages = [{"role": "system", "content": SYSTEM_PROMPT}] + self.history
+        t_llm = time.perf_counter()
         stream = await llm.chat.completions.create(model=LLM_MODEL, messages=messages, stream=True,
                                                    max_tokens=LLM_MAX_TOKENS, temperature=0.7)
         buf, first = "", True
@@ -237,7 +302,7 @@ class Session:
                 if not delta:
                     continue
                 if "llm_ttft_ms" not in metrics:
-                    metrics["llm_ttft_ms"] = round((time.perf_counter() - t_end) * 1000)
+                    metrics["llm_ttft_ms"] = round((time.perf_counter() - t_llm) * 1000)
                 buf += delta
                 while True:
                     piece, buf = pop_chunk(buf, first)
@@ -274,6 +339,7 @@ class Session:
                 while (ch := await out.get()) is not None:
                     if "first_audio_ms" not in metrics:
                         metrics["first_audio_ms"] = round((time.perf_counter() - t_end) * 1000)
+                        metrics["tts_ms"] = metrics["first_audio_ms"] - sum(metrics.get(k, 0) for k in ("turn_ms", "asr_ms", "llm_ttft_ms"))
                         await self.send(type="metrics", metrics=metrics)
                     self.client_playing = True
                     await self.ws.send_bytes((np.clip(ch, -1, 1) * 32767).astype("<i2").tobytes())
@@ -293,6 +359,7 @@ async def startup():
     t = time.perf_counter()
     await loop.run_in_executor(asr_pool, _load_asr)
     tts.synth("Ready.")
+    print("turn detection:", "Smart Turn v3.2" if smart_turn else f"silence timeout (models/smart-turn-v3.2-cpu.onnx missing)")
     print(f"models ready in {time.perf_counter() - t:.1f}s  |  LLM {LLM_MODEL} @ {LLM_BASE_URL}  |  http://127.0.0.1:{PORT}")
     if not LLM_API_KEY:
         print("WARNING: LLM_API_KEY is not set; put your Bedrock API key in .env")
@@ -331,7 +398,7 @@ async def ws_endpoint(ws: WebSocket):
                     s.history.clear()
                 elif m["type"] == "text":  # typed input, same pipeline minus ASR
                     await s.interrupt()
-                    s.reply = asyncio.create_task(s.reply_to(m["text"], time.perf_counter(), {"asr_ms": 0}))
+                    s.reply = asyncio.create_task(s.reply_to(m["text"], time.perf_counter(), {"turn_ms": 0, "asr_ms": 0}))
     except WebSocketDisconnect:
         pass
     finally:

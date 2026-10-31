@@ -281,7 +281,7 @@ function log(cls, who, text) {
 function stat(m) {
   const s = $('stats'); s.innerHTML = '';
   const add = (k, v, hero) => { if (v == null) return; const e = document.createElement('span'); if (hero) e.className = 'hero'; e.innerHTML = `${k} <b>${v} ms</b>`; s.append(e); };
-  add('voice→voice', m.first_audio_ms, true); add('asr', m.asr_ms); add('llm ttft', m.llm_ttft_ms);
+  add('voice→voice', m.first_audio_ms, true); add('turn', m.turn_ms); add('asr', m.asr_ms); add('llm ttft', m.llm_ttft_ms); add('tts', m.tts_ms);
 }
 
 async function start() {

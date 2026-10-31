@@ -8,8 +8,9 @@ if [ ! -x .venv/bin/python ]; then
 fi
 [ -f models/silero_vad.onnx ] || { mkdir -p models; curl -sL -o models/silero_vad.onnx https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx; }
 if [ "$1" = "--local" ]; then
-  .venv/bin/mlx_lm.server --model "${LOCAL_LLM:-mlx-community/Qwen3-4B-Instruct-2507-4bit}" --port 8081 >/tmp/voiceagent-llm.log 2>&1 &
+  .venv/bin/mlx_lm.server --model "${LOCAL_LLM:-mlx-community/gemma-3-4b-it-4bit}" --port 8081 >/tmp/voiceagent-llm.log 2>&1 &
   trap "kill $! 2>/dev/null" EXIT
-  export LLM_BASE_URL=http://127.0.0.1:8081/v1 LLM_API_KEY=local LLM_MODEL="${LOCAL_LLM:-mlx-community/Qwen3-4B-Instruct-2507-4bit}"
+  export LLM_BASE_URL=http://127.0.0.1:8081/v1 LLM_API_KEY=local LLM_MODEL="${LOCAL_LLM:-mlx-community/gemma-3-4b-it-4bit}"
 fi
+[ -f models/smart-turn-v3.2-cpu.onnx ] || curl -sL -o models/smart-turn-v3.2-cpu.onnx https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx
 exec .venv/bin/python server.py

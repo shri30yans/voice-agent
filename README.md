@@ -17,8 +17,8 @@ Speech recognition and speech synthesis run on your Mac; the LLM can be any Open
 
 - **Streaming end to end.** The LLM streams into a sentence chunker, and each chunk is spoken while the model keeps writing, so the first audio goes out as soon as the first clause exists.
 - **Barge-in.** Start talking while Ava is speaking and she stops; history keeps only what was actually said aloud, so the conversation stays truthful.
-- **On-device speech.** [Silero VAD](https://github.com/snakers4/silero-vad) for turn detection, [Parakeet TDT 0.6B](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3) on MLX for ASR, and [Phonon](https://huggingface.co/gradium/phonon-31m-en) (31M, CPU, streaming) for TTS.
-- **Bring any LLM.** DeepSeek V3.2 on Amazon Bedrock by default, any OpenAI-compatible API, or `./run.sh --local` to serve Qwen3-4B on your Mac with `mlx_lm.server`.
+- **On-device speech.** [Silero VAD](https://github.com/snakers4/silero-vad) for speech detection, [Smart Turn v3](https://github.com/pipecat-ai/smart-turn) (8 MB ONNX) to decide when you've actually finished, [Parakeet TDT 0.6B](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3) on MLX for ASR (optionally the smaller, ~30 ms faster [Parakeet Redux](https://huggingface.co/moondream/parakeet-redux), slightly less accurate in noise), and [Phonon](https://huggingface.co/gradium/phonon-31m-en) (31M, CPU, streaming) for TTS.
+- **Bring any LLM.** DeepSeek V3.2 on Amazon Bedrock by default, any OpenAI-compatible API, or `./run.sh --local` to serve Gemma 3 4B on your Mac with `mlx_lm.server`.
 - **Live latency readout.** The UI shows voice-to-voice, ASR and LLM time-to-first-token for every turn.
 - **Dozens of voices**, switchable live from the header, plus typed input that skips ASR.
 
@@ -37,8 +37,8 @@ flowchart LR
 
 | Stage | What happens |
 | --- | --- |
-| **Turn detection** | 32 ms VAD frames. Three voiced frames start a turn (with ~320 ms of pre-roll kept), `END_SILENCE_MS` of silence ends it. |
-| **ASR** | The whole utterance is transcribed by Parakeet on a single MLX thread. |
+| **Turn detection** | 32 ms VAD frames. Three voiced frames start a turn (with ~320 ms of pre-roll kept). After `TURN_CHECK_MS` of silence, Smart Turn judges from the audio whether you're done; ASR is started speculatively at the same moment, so the transcript is usually ready when the turn commits. If you're only pausing, it re-checks every `TURN_CHECK_MS` up to `END_SILENCE_MS`. |
+| **ASR** | The whole utterance is transcribed by Parakeet on a single worker thread. |
 | **LLM** | Replies stream token by token; the first chunk may end at a comma so speech starts sooner. |
 | **TTS** | Each chunk is synthesized and streamed to the browser in pieces while the next chunk is still being written. |
 | **Playback** | An AudioWorklet plays the audio and reports playback state, which drives barge-in and the animated orb. |
@@ -58,7 +58,7 @@ Then open **http://127.0.0.1:8000**, tap the mic and start talking. Use headphon
 
 The first run creates a Python 3.11 virtualenv, installs dependencies and downloads the VAD model; the ASR and TTS weights download from Hugging Face on first start.
 
-To run fully offline, serving Qwen3-4B locally with `mlx_lm.server`:
+To run fully offline, serving Gemma 3 4B locally with `mlx_lm.server`:
 
 ```bash
 ./run.sh --local
@@ -77,10 +77,13 @@ All settings live in `.env` (see [`.env.example`](.env.example)).
 | `LLM_MODEL` | `deepseek.v3.2` | Model name |
 | `LLM_MAX_TOKENS` | `300` | Cap on reply length |
 | `TTS_VOICE` | `Harper` | Starting voice (any English Phonon voice; switchable in the UI) |
-| `END_SILENCE_MS` | `550` | Pause that ends your turn. Lower is snappier, higher cuts you off less |
+| `TURN_CHECK_MS` | `200` | Silence before Smart Turn is first asked whether you're done (then re-asked every interval) |
+| `TURN_THRESHOLD` | `0.5` | Smart Turn probability that counts as "done". Higher waits longer, lower cuts in sooner |
+| `END_SILENCE_MS` | `900` | Longest pause tolerated before the turn is forced to end |
 | `BARGE_IN_MS` | `250` | How long you must talk over Ava to interrupt her |
 | `VAD_THRESHOLD` | `0.5` | Speech probability threshold |
-| `ASR_MODEL` | `mlx-community/parakeet-tdt-0.6b-v3` | Parakeet model for ASR |
+| `ASR_BACKEND` | `mlx` | `mlx` (Parakeet TDT via parakeet-mlx) or `redux` (Moondream Parakeet Redux; first `uv pip install "moondream>=2.4.0" "torch>=2.12,<2.15"`) |
+| `ASR_MODEL` | `mlx-community/parakeet-tdt-0.6b-v3` | Model for the chosen backend (`moondream/parakeet-redux` when `ASR_BACKEND=redux`) |
 | `SYSTEM_PROMPT` | Ava persona | Overrides the built-in, speech-friendly system prompt |
 | `PORT` | `8000` | Server port |
 
